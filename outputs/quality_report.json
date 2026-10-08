@@ -1,0 +1,7 @@
+{
+  "unique_order_ids": true,
+  "nonnegative_revenue": true,
+  "valid_customer_fk": true,
+  "valid_product_fk": true,
+  "has_rows": true
+}

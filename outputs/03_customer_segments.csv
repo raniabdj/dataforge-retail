@@ -1,0 +1,16 @@
+segment,region,active_customers,net_revenue,revenue_per_customer
+Consumer,Midlands,47,263288.93,5601.89
+SMB,Scotland,48,259538.57,5407.05
+Enterprise,Midlands,45,258408.24,5742.41
+Consumer,North,46,249222.16,5417.87
+Enterprise,South,42,247081.69,5882.9
+Enterprise,Scotland,43,245248.43,5703.45
+Enterprise,Wales,40,240223.11,6005.58
+Consumer,Scotland,37,213754.28,5777.14
+Enterprise,North,39,208590.05,5348.46
+SMB,South,38,208131.24,5477.14
+SMB,Wales,39,195498.03,5012.77
+SMB,North,32,189640.99,5926.28
+Consumer,South,36,186045.11,5167.92
+SMB,Midlands,33,184814.29,5600.43
+Consumer,Wales,35,178983.53,5113.82

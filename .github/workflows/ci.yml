@@ -1,0 +1,45 @@
+name: DataForge CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dbt and DuckDB
+        run: pip install "dbt-core==1.12.5" "dbt-duckdb==1.11.0"
+
+      - name: Run Python unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Run ingestion pipeline
+        run: python src/dataforge_pipeline.py all --rows 1500
+
+      - name: Configure dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml <<'PROFILE'
+          dataforge_dbt:
+            target: dev
+            outputs:
+              dev:
+                type: duckdb
+                path: dev.duckdb
+                schema: main
+                threads: 4
+          PROFILE
+
+      - name: Build and test dbt models
+        working-directory: dataforge_dbt
+        run: dbt build
