@@ -113,3 +113,72 @@ Then run:
 
 The dbt project uses synthetic CSV seeds included in the repository.
 
+
+
+---
+
+## Phase 3 — Azure Data Engineering Pipeline
+
+DataForge implements a Bronze, Silver and Gold medallion architecture using Azure Data Lake Storage Gen2, Python, PyArrow and DuckDB.
+
+### Architecture
+
+- **Bronze:** Raw events (JSONL), customers (CSV) and products (CSV) stored in Azure.
+- **Silver:** Python validation, duplicate detection, invalid-record rejection and clean Parquet output.
+- **Gold:** DuckDB sales fact table and three analytics marts, exported as Parquet and uploaded to Azure.
+
+### Pipeline Results
+
+| Metric | Result |
+|---|---:|
+| Raw events | 12,013 |
+| Valid orders | 11,975 |
+| Rejected events | 25 |
+| Duplicate events | 13 |
+| Daily sales records | 150 |
+| Product categories | 4 |
+| Customer segments | 3 |
+| Total revenue | 4,169,175.50 |
+| Estimated gross profit | 3,189,154.20 |
+
+The dataset is synthetic. Estimated gross profit excludes shipping, tax and other operating expenses.
+
+### Azure Storage Structure
+
+    dataforge/
+      bronze/
+        events.jsonl
+        customers.csv
+        products.csv
+      silver/
+        clean_orders.parquet
+      gold/
+        fct_sales.parquet
+        mart_daily_sales.parquet
+        mart_category_performance.parquet
+        mart_customer_segments.parquet
+
+### Running the Azure Pipeline
+
+Install dependencies:
+
+    python3 -m pip install -r requirements.txt
+
+Authenticate with Azure:
+
+    az login
+
+Run the pipeline:
+
+    python3 src/azure_pipeline.py
+
+The storage account must already contain the Bronze files, and the signed-in account requires appropriate Azure storage data permissions.
+
+The pipeline reads Bronze data, validates and deduplicates events, generates Silver and Gold Parquet files, runs reconciliation checks, and uploads five datasets to Azure.
+
+### Current Limitations
+
+- The pipeline is executed on demand, not on a schedule.
+- Gold transformations currently read customer and product reference data from local CSV copies.
+- Generated Parquet files are excluded from Git.
+- Authentication uses Azure CLI credentials without embedding secrets in source code.

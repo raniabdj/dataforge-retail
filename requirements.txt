@@ -1,1 +1,13 @@
-# No third-party dependencies. Python 3.10+ standard library only.
+# DataForge - Python dependencies
+
+# Azure Data Lake Storage Gen2
+azure-identity==1.26.0
+azure-storage-file-datalake==12.26.0
+
+# Data processing and Parquet
+duckdb==1.5.6
+pyarrow==25.0.1
+
+# dbt transformations
+dbt-core==1.12.5
+dbt-duckdb==1.11.0
