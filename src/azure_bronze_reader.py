@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+from silver_transform import validate_orders
 
 from azure.identity import AzureCliCredential
 from azure.storage.filedatalake import DataLakeServiceClient
@@ -51,45 +52,11 @@ print("\nFirst event:")
 print(events[0])
 # SILVER LAYER: VALIDATION AND DEDUPLICATION
 
-valid_customer_ids = {c["customer_id"] for c in customers}
-valid_product_ids = {p["product_id"] for p in products}
-
-clean_events = []
-rejected_events = []
-seen_order_ids = set()
-duplicate_count = 0
-
-for event in events:
-    order_id = event.get("order_id")
-
-    if not order_id:
-        rejected_events.append(event)
-        continue
-
-    if order_id in seen_order_ids:
-        duplicate_count += 1
-        continue
-
-    seen_order_ids.add(order_id)
-
-    try:
-        revenue = float(event["revenue"])
-        quantity = int(event["quantity"])
-
-        is_valid = (
-            revenue >= 0
-            and quantity > 0
-            and event["customer_id"] in valid_customer_ids
-            and event["product_id"] in valid_product_ids
-        )
-
-        if is_valid:
-            clean_events.append(event)
-        else:
-            rejected_events.append(event)
-
-    except (KeyError, TypeError, ValueError):
-        rejected_events.append(event)
+clean_events, rejected_events, duplicate_count = validate_orders(
+    events,
+    customers,
+    products,
+)
 
 print("\n--- SILVER VALIDATION RESULTS ---")
 print(f"Raw events: {len(events)}")
