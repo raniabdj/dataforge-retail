@@ -1,4 +1,12 @@
 
+"""
+DataForge - Azure Gold Layer
+
+Reads Silver Parquet and Azure Bronze reference data,
+builds Gold fact and analytics tables using reusable
+transformations, validates data quality, and exports Parquet.
+"""
+
 from pathlib import Path
 from io import BytesIO
 
@@ -8,9 +16,15 @@ import pandas as pd
 from azure.identity import AzureCliCredential
 from azure.storage.filedatalake import DataLakeServiceClient
 
+from gold_transform import (
+    build_gold_tables,
+    check_gold_quality,
+    MART_QUERIES,
+)
+
 
 # ==========================================
-# DATAFORGE - AZURE GOLD LAYER
+# 1. CONFIGURATION
 # ==========================================
 
 STORAGE_ACCOUNT = "dataforgelake2026"
@@ -23,7 +37,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ==========================================
-# 1. CONNECT TO AZURE DATA LAKE
+# 2. CONNECT TO AZURE DATA LAKE
 # ==========================================
 
 print("\n--- CONNECTING TO AZURE DATA LAKE ---")
@@ -45,10 +59,11 @@ print("Connected to Azure Data Lake")
 
 
 # ==========================================
-# 2. DOWNLOAD BRONZE REFERENCE DATA
+# 3. DOWNLOAD BRONZE REFERENCE DATA
 # ==========================================
 
 def download_csv_from_azure(file_path):
+    """Download a CSV from Azure Data Lake into pandas."""
 
     print(f"Downloading: {file_path}")
 
@@ -77,7 +92,7 @@ products_df = download_csv_from_azure(
 
 
 # ==========================================
-# 3. READ SILVER AND REGISTER REFERENCE DATA
+# 4. LOAD SILVER DATA INTO DUCKDB
 # ==========================================
 
 print("\n--- LOADING SILVER DATA ---")
@@ -107,69 +122,49 @@ try:
 
 
     # ==========================================
-    # 4. CREATE GOLD FACT SALES
+    # 5. BUILD GOLD FACT TABLE AND MARTS
     # ==========================================
 
-    print("\n--- CREATING GOLD FACT TABLE ---")
+    print("\n--- BUILDING GOLD TABLES ---")
 
-    con.execute("""
-        CREATE TABLE gold_sales AS
-        SELECT
-            o.order_id,
-            o.event_id,
-            CAST(o.event_time AS DATE) AS order_date,
-            o.status AS order_status,
-            o.customer_id,
-            c.region,
-            c.segment AS customer_segment,
-            o.product_id,
-            p.category,
-            CAST(o.quantity AS INTEGER) AS quantity,
-            CAST(o.revenue AS DECIMAL(18,2)) AS revenue,
-            CAST(p.unit_cost AS DECIMAL(18,2)) AS unit_cost,
+    # Use reusable production transformation logic
+    build_gold_tables(con)
 
-            ROUND(
-                CAST(o.quantity AS INTEGER) *
-                CAST(p.unit_cost AS DECIMAL(18,2)),
-                2
-            ) AS total_cost,
+    print("Gold fact table created")
+    print("Three analytics marts created")
 
-            ROUND(
-                CAST(o.revenue AS DECIMAL(18,2)) -
-                (
-                    CAST(o.quantity AS INTEGER) *
-                    CAST(p.unit_cost AS DECIMAL(18,2))
-                ),
-                2
-            ) AS estimated_profit
 
-        FROM silver_orders o
+    # ==========================================
+    # 6. VALIDATE GOLD DATA QUALITY
+    # ==========================================
 
-        LEFT JOIN customers c
-            ON o.customer_id = c.customer_id
+    print("\n--- GOLD DATA QUALITY CHECKS ---")
 
-        LEFT JOIN products p
-            ON o.product_id = p.product_id
-    """)
+    quality = check_gold_quality(con)
 
-    # Check for missing customer or product matches
-    missing_references = con.execute("""
-        SELECT COUNT(*)
-        FROM gold_sales
-        WHERE region IS NULL
-           OR customer_segment IS NULL
-           OR category IS NULL
-           OR unit_cost IS NULL
-    """).fetchone()[0]
+    print("PASS: Silver and Gold order counts match")
+    print("PASS: Gold order IDs are unique")
+    print("PASS: Customer and product references are valid")
 
-    if missing_references > 0:
-        raise ValueError(
-            f"Gold quality check failed: "
-            f"{missing_references} rows have missing "
-            "customer or product reference data."
+    for name in MART_QUERIES:
+        print(
+            f"PASS: {name} reconciles with gold_sales"
         )
 
-    # Export Gold fact table
+    print("\n--- GOLD FACT TABLE ---")
+    print(f"Orders: {quality['orders']}")
+    print(f"Revenue: {quality['revenue']}")
+    print(
+        f"Estimated profit: {quality['estimated_profit']}"
+    )
+
+    print("\nAll Gold reconciliation checks passed!")
+
+
+    # ==========================================
+    # 7. EXPORT GOLD FACT TABLE
+    # ==========================================
+
     fact_path = OUTPUT_DIR / "fct_sales.parquet"
 
     con.execute(f"""
@@ -178,74 +173,16 @@ try:
         (FORMAT PARQUET, COMPRESSION SNAPPY)
     """)
 
-    result = con.execute("""
-        SELECT
-            COUNT(*) AS total_orders,
-            ROUND(SUM(revenue), 2) AS total_revenue,
-            ROUND(SUM(estimated_profit), 2)
-                AS estimated_profit
-        FROM gold_sales
-    """).fetchone()
-
-    print(f"Orders: {result[0]}")
-    print(f"Revenue: {result[1]}")
-    print(f"Estimated profit: {result[2]}")
-    print(f"Saved: {fact_path}")
+    print(f"\nSaved: {fact_path}")
 
 
     # ==========================================
-    # 5. CREATE GOLD ANALYTICS MARTS
+    # 8. EXPORT GOLD ANALYTICS MARTS
     # ==========================================
 
-    marts = {
+    print("\n--- EXPORTING GOLD ANALYTICS MARTS ---")
 
-        "mart_daily_sales": """
-            SELECT
-                order_date,
-                COUNT(*) AS total_orders,
-                ROUND(SUM(revenue), 2)
-                    AS total_revenue,
-                ROUND(SUM(estimated_profit), 2)
-                    AS estimated_profit
-            FROM gold_sales
-            GROUP BY order_date
-            ORDER BY order_date
-        """,
-
-        "mart_category_performance": """
-            SELECT
-                category,
-                COUNT(*) AS total_orders,
-                ROUND(SUM(revenue), 2)
-                    AS total_revenue,
-                ROUND(SUM(estimated_profit), 2)
-                    AS estimated_profit
-            FROM gold_sales
-            GROUP BY category
-            ORDER BY total_revenue DESC
-        """,
-
-        "mart_customer_segments": """
-            SELECT
-                customer_segment,
-                COUNT(*) AS total_orders,
-                ROUND(SUM(revenue), 2)
-                    AS total_revenue,
-                ROUND(SUM(estimated_profit), 2)
-                    AS estimated_profit
-            FROM gold_sales
-            GROUP BY customer_segment
-            ORDER BY total_revenue DESC
-        """
-    }
-
-    print("\n--- CREATING GOLD ANALYTICS MARTS ---")
-
-    for name, query in marts.items():
-
-        con.execute(
-            f"CREATE TABLE {name} AS {query}"
-        )
+    for name in MART_QUERIES:
 
         output_path = OUTPUT_DIR / f"{name}.parquet"
 
@@ -262,74 +199,12 @@ try:
         print(f"{name}: {row_count} rows")
         print(f"Saved: {output_path}")
 
-
-    # ==========================================
-    # 6. DATA QUALITY AND RECONCILIATION
-    # ==========================================
-
-    print("\n--- GOLD DATA QUALITY CHECKS ---")
-
-    fact_totals = con.execute("""
-        SELECT
-            COUNT(*),
-            SUM(revenue),
-            SUM(estimated_profit)
-        FROM gold_sales
-    """).fetchone()
-
-    # Validate that no orders were lost in Gold
-    if fact_totals[0] != silver_count:
-        raise ValueError(
-            "Silver-to-Gold row count mismatch: "
-            f"Silver={silver_count}, "
-            f"Gold={fact_totals[0]}"
-        )
-
-    print("PASS: Silver and Gold order counts match")
-
-    # Validate unique order IDs
-    duplicate_count = con.execute("""
-        SELECT COUNT(*) - COUNT(DISTINCT order_id)
-        FROM gold_sales
-    """).fetchone()[0]
-
-    if duplicate_count != 0:
-        raise ValueError(
-            f"Gold contains {duplicate_count} duplicate orders"
-        )
-
-    print("PASS: Gold order IDs are unique")
-
-    # Reconcile each mart with the Gold fact table
-    for name in marts:
-
-        mart_totals = con.execute(f"""
-            SELECT
-                SUM(total_orders),
-                SUM(total_revenue),
-                SUM(estimated_profit)
-            FROM {name}
-        """).fetchone()
-
-        if mart_totals != fact_totals:
-            raise ValueError(
-                f"Reconciliation failed for {name}: "
-                f"expected {fact_totals}, "
-                f"got {mart_totals}"
-            )
-
-        print(
-            f"PASS: {name} reconciles with gold_sales"
-        )
-
-    print("\nAll Gold reconciliation checks passed!")
-
 finally:
     con.close()
 
 
 # ==========================================
-# 7. FINISH
+# 9. FINISH
 # ==========================================
 
 print("\nDataForge Gold pipeline completed successfully!")
